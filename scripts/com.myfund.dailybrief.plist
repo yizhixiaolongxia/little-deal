@@ -1,8 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  ⚠️ 这个 plist 目前不生效，实际在生成简报的是 backend/scheduler.py。
-  原因和两条出路说在 com.myfund.navsync.plist 的头部，TCC 一视同仁拦这两个。
+  ✅ 这个 plist 现在是生效的：launchctl list 里退出码 0，briefs/cron.log
+  里能看到它每个工作日 21:00 连续生成简报（cron.log 是它自己的 stdout，
+  08-10~08-14 那几行就是它写的）。早先那句「不生效」的警告已经过时。
+
+  为什么它能跑、而 com.myfund.navsync 还是被 TCC 拦（退出码 126）：TCC 授权
+  是按可执行文件给的。这个任务直接调 venv 里的 python，navsync 调的是 /bin/bash——
+  给了前者磁盘访问、没给后者，就成了现在一个通一个不通。
+
+  注意：后端 backend/scheduler.py 里也有一套调度，后端开着时它 21:00 也会生成一次。
+  daily_brief.py 幂等（覆盖当天文件），两边都跑不会写出错数据，但一天写两次、
+  日志分散在两处。想收敛成一套的话，另说。
 
   ==== 以下是它本来的设计 ====
 
