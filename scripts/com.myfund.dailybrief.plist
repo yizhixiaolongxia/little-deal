@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  ⚠️ 这个 plist 目前不生效，实际在生成简报的是 backend/scheduler.py。
+  原因和两条出路说在 com.myfund.navsync.plist 的头部，TCC 一视同仁拦这两个。
+
+  ==== 以下是它本来的设计 ====
+
+  每个工作日 21:00 生成决策简报。
+
+  （早先这里写着「launchd 比 cron 省事，不需要开完全磁盘访问权限」，这是错的。
+  实测下 launchd 同样被 TCC 拦，跟 cron 一模一样。）
+
+  为什么是 21:00：必须排在 com.myfund.navsync（20:30）之后。简报里的回撤、
+  风险指标、降仓档位全部源于 fund_nav 表，跑在同步之前的话读到的是前一天的
+  净值——回撤会滞后一天，而这种错恰好可能把已经该降仓的那天给盖过去。
+  改这两个时间时必须一起改，别把顺序倒过来。
+
+  安装：
+    cp scripts/com.myfund.dailybrief.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.myfund.dailybrief.plist
+
+  立刻试跑一次（不用等到 21:00）：
+    launchctl start com.myfund.dailybrief
+
+  卸载：
+    launchctl unload ~/Library/LaunchAgents/com.myfund.dailybrief.plist
+
+  说明：到点时电脑在睡眠会跳过，醒来后 launchd 会补跑一次，所以简报不会丢。
+        法定节假日也会跑，那天生成的简报里数据日期不会更新，看一眼就知道。
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.myfund.dailybrief</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/littlelei/Documents/mywork/my-fund-app/backend/venv/bin/python</string>
+        <string>/Users/littlelei/Documents/mywork/my-fund-app/scripts/daily_brief.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/littlelei/Documents/mywork/my-fund-app</string>
+
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Weekday</key><integer>1</integer>
+            <key>Hour</key><integer>21</integer>
+            <key>Minute</key><integer>0</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key><integer>2</integer>
+            <key>Hour</key><integer>21</integer>
+            <key>Minute</key><integer>0</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key><integer>3</integer>
+            <key>Hour</key><integer>21</integer>
+            <key>Minute</key><integer>0</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key><integer>4</integer>
+            <key>Hour</key><integer>21</integer>
+            <key>Minute</key><integer>0</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key><integer>5</integer>
+            <key>Hour</key><integer>21</integer>
+            <key>Minute</key><integer>0</integer>
+        </dict>
+    </array>
+
+    <key>StandardOutPath</key>
+    <string>/Users/littlelei/Documents/mywork/my-fund-app/briefs/cron.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/littlelei/Documents/mywork/my-fund-app/briefs/cron.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

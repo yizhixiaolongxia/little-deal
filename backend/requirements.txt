@@ -1,0 +1,10 @@
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+sqlalchemy>=2.0,<3.0
+aiomysql>=0.2,<1.0
+# MySQL 8 默认 caching_sha2_password，PyMySQL 首次认证要用 RSA 加密传密码，
+# 没有它连不上库（报「'cryptography' package is required」）。aiomysql 不会
+# 把它带进来，必须显式钉住
+cryptography>=42
+httpx>=0.28,<1.0
+python-dotenv>=1.0,<2.0

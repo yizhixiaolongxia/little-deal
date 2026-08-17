@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  ⚠️ 这个 plist 目前不生效，实际在跑同步的是 backend/scheduler.py。
+
+  原因：项目放在 ~/Documents 下，macOS 的 TCC 隐私保护会拒绝 launchd 起的后台进程
+  访问这个目录，脚本连读都读不到（报 Operation not permitted，退出码 126）。这跟文件
+  权限无关，chmod 改不动。要让它真正跑起来只有两条路：给 /bin/bash 开「完全磁盘访问」
+  权限（等于给所有 shell 脚本开了全盘），或者把项目移出 ~/Documents。
+
+  文件留着是因为换到没有这个限制的环境（Linux、或项目不在受保护目录下）时它是可用的。
+  在本机启用之前先把 backend/scheduler.py 里的调度关掉，否则两边会同时同步。
+
+  ==== 以下是它本来的设计 ====
+
+  每个工作日 20:30 同步基金历史净值 + 基准指数到本地库。
+
+  为什么是 20:30：净值在收盘后公布，绝大多数基金 20:00 前还没出，
+  太早跑等于白跑一趟上游。QDII 本来就滞后几个交易日，靠第二天补。
+
+  跑的是 sync_daily.sh 而不是直接调 sync_nav.py：净值和基准得在同一次任务里
+  更新完，否则超额收益会拿不同日期的两边相减，算出来的数是错的。
+
+  安装：
+    cp scripts/com.myfund.navsync.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.myfund.navsync.plist
+
+  立刻试跑一次（不用等到 20:30）：
+    launchctl start com.myfund.navsync
+
+  卸载：
+    launchctl unload ~/Library/LaunchAgents/com.myfund.navsync.plist
+
+  WorkingDirectory 指向 backend：config.py 的 load_dotenv 要读那里的 .env。
+  到点时电脑睡眠会跳过，醒来后 launchd 补跑一次；漏一天也不要紧，
+  pingzhongdata 每次返回的都是全历史，下次同步会把缺口一起补上。
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.myfund.navsync</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/littlelei/Documents/mywork/my-fund-app/scripts/sync_daily.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/littlelei/Documents/mywork/my-fund-app/backend</string>
+
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Weekday</key><integer>1</integer>
+            <key>Hour</key><integer>20</integer>
+            <key>Minute</key><integer>30</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key><integer>2</integer>
+            <key>Hour</key><integer>20</integer>
+            <key>Minute</key><integer>30</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key><integer>3</integer>
+            <key>Hour</key><integer>20</integer>
+            <key>Minute</key><integer>30</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key><integer>4</integer>
+            <key>Hour</key><integer>20</integer>
+            <key>Minute</key><integer>30</integer>
+        </dict>
+        <dict>
+            <key>Weekday</key><integer>5</integer>
+            <key>Hour</key><integer>20</integer>
+            <key>Minute</key><integer>30</integer>
+        </dict>
+    </array>
+
+    <key>StandardOutPath</key>
+    <string>/Users/littlelei/Documents/mywork/my-fund-app/briefs/navsync.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/littlelei/Documents/mywork/my-fund-app/briefs/navsync.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
