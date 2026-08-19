@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { fetchMarketRisk, fetchMarketRiskHistory } from '../hooks/useFundApi';
+import { fetchMarketRisk, fetchMarketRiskHistory, fetchMarketPosition } from '../hooks/useFundApi';
 
 // 情绪等级 -> 颜色映射
 const SENTIMENT_COLORS = {
@@ -9,6 +9,78 @@ const SENTIMENT_COLORS = {
     greed: '#27ae60',
     extreme_greed: '#2ecc71',
 };
+
+// 分位越高 = 位置越贵/杠杆越重 = 风险越高。和情绪那套配色方向相反是故意的：
+// 情绪绿色表示贪婪（该警惕），分位绿色表示便宜（可以买），两个色轴含义不同，
+// 所以分位条一律带数字，不让人只靠颜色猜。
+const PCTL_HIGH = 80;
+function pctlColor(v) {
+    if (v === null || v === undefined) return 'var(--text-muted)';
+    if (v >= PCTL_HIGH) return '#e74c3c';
+    if (v >= 70) return '#e67e22';
+    if (v <= 30) return '#27ae60';
+    return '#f1c40f';
+}
+
+// 后端判定文案沿用简报的 **强调** 写法，这里就地渲染，不引 markdown 库
+function emphasize(text) {
+    if (!text) return null;
+    return text.split('**').map((seg, i) => (
+        i % 2 ? <strong key={i}>{seg}</strong> : <span key={i}>{seg}</span>
+    ));
+}
+
+// 后端给的是一位小数的浮点，85.0 过 JSON 到 JS 会渲成 「85」，和旁边的 90.6 摆在
+// 一起像两个精度。分位一律对齐到一位小数
+function fmtPctl(v) {
+    return Number(v).toFixed(1);
+}
+
+/**
+ * 历史分位条。80% 处画一条刻度线，把「高位」这个阈值直接摆在图上，
+ * 免得看到 76 和 84 两个数却不知道分界在哪
+ */
+function PctlBar({ value }) {
+    if (value === null || value === undefined) {
+        return (
+            <div className="pctl-bar-wrap">
+                <div className="pctl-bar pctl-bar-empty">样本不足</div>
+            </div>
+        );
+    }
+    // 数字必须放在条外面。放里面踩过坑：数字颜色跟填充色是同一个，填充过 90%
+    // 就盖到数字下面，变成红字压红条彻底看不见 —— 而高分位正是最该看清的区间
+    return (
+        <div className="pctl-bar-wrap" title={`历史分位 ${fmtPctl(value)}%`}>
+            <div className="pctl-bar">
+                <div className="pctl-bar-fill"
+                    style={{ width: `${Math.min(100, Math.max(0, value))}%`, background: pctlColor(value) }} />
+                <span className="pctl-bar-tick" style={{ left: `${PCTL_HIGH}%` }} />
+            </div>
+            <span className="pctl-bar-num" style={{ color: pctlColor(value) }}>{fmtPctl(value)}</span>
+        </div>
+    );
+}
+
+/**
+ * 四个窗口的分位并排列出。只给一个窗口会误导：指数点位带长期上行漂移，
+ * 全历史分位天然偏高，四个数放一起才看得出是真的高还是指数长大了
+ */
+function PctlWindows({ items }) {
+    if (!items || !items.length) return null;
+    return (
+        <div className="pctl-windows">
+            {items.map((w) => (
+                <span className="pctl-win" key={w.key} title={w.reason || `${w.rows} 个交易日`}>
+                    {w.label}
+                    <b style={{ color: w.value === null ? 'var(--text-muted)' : pctlColor(w.value) }}>
+                        {w.value === null ? '–' : fmtPctl(w.value)}
+                    </b>
+                </span>
+            ))}
+        </div>
+    );
+}
 
 /**
  * Sparkline 小折线图（内联 SVG）
@@ -90,6 +162,7 @@ function SentimentGauge({ score, level, label }) {
 export default function MarketRisk() {
     const [data, setData] = useState(null);
     const [history, setHistory] = useState([]);
+    const [position, setPosition] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(false);
 
@@ -109,10 +182,20 @@ export default function MarketRisk() {
         } catch (e) {
             setHistory([]);
         }
+        // 历史位置同理独立降级。但它失败时不能静默不显示——只剩情绪仪表盘的
+        // 面板看起来是完整的，人会以为位置没问题，所以把错误留在 state 里开说
+        try {
+            setPosition(await fetchMarketPosition());
+        } catch (e) {
+            setPosition({ failed: e.message || '位置数据获取失败' });
+        }
         setLoading(false);
     }, []);
 
     useEffect(() => { load(); }, [load]);
+
+    const margin = position?.margin;
+    const verdict = position?.verdict;
 
     return (
         <section className="market-risk">
@@ -186,6 +269,74 @@ export default function MarketRisk() {
                             </div>
                         )}
                     </div>
+                </div>
+            )}
+
+            {!loading && position && (
+                <div className="position-block">
+                    <div className="position-head">
+                        <span className="position-title">历史位置</span>
+                        <span className="position-sub">
+                            {position.updated_at
+                                ? `点位分位 · 两融杠杆分位（截至 ${position.updated_at}）`
+                                : '点位分位 · 两融杠杆分位'}
+                        </span>
+                    </div>
+
+                    {position.failed && (
+                        <div className="position-verdict pv-unknown">{position.failed}</div>
+                    )}
+
+                    {verdict && (
+                        <div className={`position-verdict pv-${verdict.level}`}>
+                            {emphasize(verdict.text)}
+                        </div>
+                    )}
+
+                    {position.indices?.map((idx) => (
+                        <div className="position-row" key={idx.key}>
+                            <div className="pos-name">{idx.name}</div>
+                            <div className="pos-value">{idx.close.toFixed(2)}</div>
+                            <div className="pos-bar">
+                                <PctlBar value={idx.verdict_pctl} />
+                                <PctlWindows items={idx.percentiles} />
+                            </div>
+                            <div className="pos-extra" title={`历史最高 ${idx.high}（${idx.high_date}）`}>
+                                <span className="pos-extra-label">距高点</span>
+                                {idx.from_high}%
+                            </div>
+                        </div>
+                    ))}
+
+                    {margin && margin.pct !== null && margin.pct !== undefined && (
+                        <div className="position-row position-row-margin">
+                            <div className="pos-name">融资余额</div>
+                            <div className="pos-value">
+                                {margin.pct}%
+                                <span className="pos-value-sub">{margin.rz_ye_yi} 亿</span>
+                            </div>
+                            <div className="pos-bar">
+                                <PctlBar value={margin.verdict_pctl} />
+                                <PctlWindows items={margin.percentiles} />
+                            </div>
+                            <div className="pos-extra" title={`历史峰值 ${margin.peak_pct}%（${margin.peak_date}）`}>
+                                <span className="pos-extra-label">峰值</span>
+                                {margin.peak_pct}%
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 漂移的坑必须写在界面上，写在代码注释里只有改代码的人看得到 */}
+                    <div className="position-foot">
+                        指数点位含长期上行漂移，全历史分位天然偏高，看短窗口更可靠；
+                        「距高点」不受漂移影响。融资余额按占流通市值比判定，不看绝对额。
+                    </div>
+
+                    {position.notes?.length > 0 && (
+                        <ul className="position-notes">
+                            {position.notes.map((n, i) => <li key={i}>{n}</li>)}
+                        </ul>
+                    )}
                 </div>
             )}
         </section>

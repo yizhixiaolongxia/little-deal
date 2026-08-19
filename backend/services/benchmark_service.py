@@ -40,8 +40,15 @@ SINA_KLINE = (
 
 # 基准登记表。key 是对外用的短名，symbol 是新浪的标的代码。
 # 加新基准前先确认它在新浪还有更新——见模块顶部注释里的停更坑。
+#
+# 后三个不是给超额收益用的（组合基准只有 hs300），是给市场风险面板算点位
+# 历史分位用的：只看沪深300 会漏掉风格分化——2021 年初沪深300 在高位而中证500
+# 还在半山腰，两个指数的分位能差 30 个点，只看一个会把「结构性贵」读成「全面贵」。
 BENCHMARKS: Dict[str, dict] = {
     "hs300": {"symbol": "sh000300", "name": "沪深300"},
+    "sh": {"symbol": "sh000001", "name": "上证指数"},
+    "zz500": {"symbol": "sh000905", "name": "中证500"},
+    "cyb": {"symbol": "sz399006", "name": "创业板指"},
 }
 DEFAULT_BENCHMARK = "hs300"
 
@@ -77,6 +84,38 @@ def _expected_trade_date(now: datetime) -> date:
     while d.weekday() >= 5:
         d -= timedelta(days=1)
     return d
+
+
+def expected_trade_date(now: Optional[datetime] = None,
+                        close_hour: int = _CLOSE_HOUR) -> date:
+    """对外版的期望交易日。close_hour 可调是给发布更晚的数据源用的——
+    两融余额要等交所盘后汇总，十六点拿不到当天的数"""
+    now = now or datetime.now()
+    d = now.date()
+    if now.hour < close_hour:
+        d -= timedelta(days=1)
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    return d
+
+
+def staleness(last: Optional[date], label: str,
+              now: Optional[datetime] = None,
+              close_hour: int = _CLOSE_HOUR) -> Optional[str]:
+    """本地最新一天落后期望交易日太多就返回告警文案，否则 None
+
+    抽成公共函数是给分位面板用的：分位算的是「今天在历史上的位置」，
+    而「今天」实际上是库里最后一行。要是那一行停在半个月前，面板会拿陈旧
+    点位算出一个看起来完全正常的分位，这比缺数更危险。
+    """
+    expected = expected_trade_date(now, close_hour)
+    if last is None:
+        return f"{label} 本地无数据"
+    lag = (expected - last).days
+    if lag > _STALE_TOLERANCE_DAYS:
+        return (f"{label} 本地最新只到 {last}，比期望交易日 {expected} "
+                f"落后 {lag} 天，分位结果不代表今天")
+    return None
 
 
 # ── 落库 ──────────────────────────────────────────────────────────────

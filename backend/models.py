@@ -320,3 +320,33 @@ class MacroDaily(Base):
         Index("idx_macro_daily_code", "code", "trade_date"),
     )
 
+
+class MarginDaily(Base):
+    """两融余额日度（全市场合计，沪深两市）
+
+    为什么不塞进 MacroDaily 的长表：那张表一行一个标量值，而两融这几个字段
+    必须同期取用——只看融资余额涨到 2.67 万亿会得出「杠杆历史最高」，但同期
+    流通市值从 2015 年的 45 万亿涨到了 102 万亿，占比其实还没到当年一半。
+    拆成四行标量存，每次算占比都要自己 join 回来对齐日期，反而更容易错。
+
+    rz_ye_pct 是上游直接给的占比（RZYEZB），不是我们用 rz_ye/ltsz 算的。
+    两者实测吻合到小数点后三位，但上游口径里流通市值的取数时点我们并不掌握，
+    自己算等于换了一把尺子。冗余存 ltsz 只为出问题时能对账。
+    """
+    __tablename__ = "margin_daily"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    trade_date = Column(Date, nullable=False, unique=True)
+    rz_ye = Column(Float, nullable=False)        # 融资余额，元
+    rz_ye_pct = Column(Float)                    # 融资余额占流通市值比，%（主指标）
+    rq_ye = Column(Float)                        # 融券余额，元
+    rzrq_ye = Column(Float)                      # 两融余额合计，元
+    ltsz = Column(Float)                         # 两市流通市值，元（对账用）
+    hs300_close = Column(Float)                  # 上游同期给的沪深300 收盘，双源对账用
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("idx_margin_daily_date", "trade_date"),
+    )
+

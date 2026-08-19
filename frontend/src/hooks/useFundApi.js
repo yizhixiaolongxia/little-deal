@@ -108,6 +108,10 @@ export async function fetchMarketRiskHistory(days = 30) {
     return request(`/market/risk/history?days=${days}`);
 }
 
+export async function fetchMarketPosition() {
+    return request('/market/position');
+}
+
 // ===== 模拟投资 =====
 export async function fetchSimAccount() {
     return request('/sim/account');

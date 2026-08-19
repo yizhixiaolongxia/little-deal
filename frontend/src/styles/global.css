@@ -443,6 +443,53 @@ body::after {
 .sentiment-history { display: flex; flex-direction: column; align-items: center; gap: 2px; margin-top: 6px; }
 .sentiment-history-label { font-size: 0.6rem; color: var(--text-muted); letter-spacing: 0.04em; }
 
+/* ===== 历史位置（点位分位 + 两融杠杆分位） ===== */
+.position-block { margin-top: 20px; padding-top: 18px; border-top: 1px dashed var(--border); }
+.position-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.position-title { font-family: var(--font-display); font-weight: 700; font-size: 0.88rem; color: var(--text-primary); }
+.position-sub { font-size: 0.66rem; color: var(--text-muted); letter-spacing: 0.02em; }
+
+.position-verdict { font-size: 0.78rem; line-height: 1.6; color: var(--text-secondary); padding: 10px 14px; margin-bottom: 14px; border-radius: var(--radius-sm); border-left: 3px solid var(--text-muted); background: var(--bg-elevated); }
+.position-verdict strong { color: var(--text-primary); font-weight: 700; }
+.position-verdict.pv-extreme { border-left-color: #e74c3c; }
+.position-verdict.pv-high { border-left-color: #e67e22; }
+.position-verdict.pv-mid { border-left-color: #f1c40f; }
+.position-verdict.pv-low { border-left-color: #27ae60; }
+.position-verdict.pv-partial,
+.position-verdict.pv-unknown { border-left-color: var(--text-muted); color: var(--text-muted); }
+/* 数据陈旧不走灰色：它不是「信息少了点」，而是「这个分位可能是错的」，要挡眼 */
+.position-verdict.pv-stale { border-left-color: #e67e22; background: rgba(230, 126, 34, 0.08); }
+
+.position-row { display: grid; grid-template-columns: 72px 96px 1fr 74px; align-items: center; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--border); }
+.position-row:last-of-type { border-bottom: none; }
+/* 融资那一行和四个指数不是同一类东西（一个是价格、一个是杠杆），隔一道免得被当成第五个指数 */
+.position-row-margin { margin-top: 6px; border-top: 1px solid var(--border); }
+.pos-name { font-family: var(--font-body); font-weight: 600; font-size: 0.76rem; color: var(--text-secondary); }
+.pos-value { font-family: var(--font-mono); font-weight: 700; font-size: 0.9rem; color: var(--text-primary); letter-spacing: -0.02em; display: flex; flex-direction: column; }
+.pos-value-sub { font-family: var(--font-mono); font-weight: 400; font-size: 0.62rem; color: var(--text-muted); letter-spacing: 0; }
+.pos-bar { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.pos-extra { font-family: var(--font-mono); font-size: 0.68rem; color: var(--text-muted); text-align: right; cursor: help; }
+/* 标签固定占一行。不固定的话「距高点 -34.5%」能排下、「距高点 -19.59%」排不下，
+   四行里一行一行、三行两行，参差不齐 */
+.pos-extra-label { display: block; font-family: var(--font-body); }
+
+.pctl-bar-wrap { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.pctl-bar { position: relative; flex: 1; min-width: 0; height: 14px; border-radius: 7px; background: var(--chart-grid, #e8e8e8); overflow: hidden; }
+.pctl-bar-fill { position: absolute; inset: 0 auto 0 0; border-radius: 7px; transition: width var(--dur) var(--ease-out); }
+/* 80% 阈值刻度线：把「高位」的分界画在图上，不让人对着数字猜 */
+.pctl-bar-tick { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--text-primary); opacity: 0.35; }
+/* 数字在条外，不能被填充盖住：数字颜色就是填充色，叠在一起等于消失 */
+.pctl-bar-num { flex: 0 0 30px; text-align: right; font-family: var(--font-mono); font-weight: 700; font-size: 0.68rem; letter-spacing: -0.02em; }
+.pctl-bar-empty { display: flex; align-items: center; padding-left: 8px; font-size: 0.62rem; color: var(--text-muted); }
+
+.pctl-windows { display: flex; gap: 10px; flex-wrap: wrap; }
+.pctl-win { font-size: 0.6rem; color: var(--text-muted); letter-spacing: 0.02em; cursor: help; }
+.pctl-win b { font-family: var(--font-mono); font-weight: 700; margin-left: 3px; }
+
+.position-foot { margin-top: 12px; font-size: 0.63rem; line-height: 1.7; color: var(--text-muted); }
+.position-notes { margin: 8px 0 0; padding-left: 18px; font-size: 0.66rem; line-height: 1.7; color: var(--text-muted); }
+.position-notes li { margin-bottom: 2px; }
+
 /* ===== Page Tabs ===== */
 .page-tabs { display: flex; gap: 8px; margin-bottom: 24px; border-bottom: 1px solid var(--border); }
 .page-tab { font-family: var(--font-display); font-weight: 600; font-size: 0.85rem; padding: 10px 18px; background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--text-muted); cursor: pointer; transition: color var(--dur) var(--ease-out), border-color var(--dur) var(--ease-out); }
@@ -654,6 +701,12 @@ body::after {
     .market-risk-indices { flex-direction: column; }
     .index-card { min-width: unset; flex-direction: row; align-items: center; gap: 12px; }
     .index-card .sparkline { margin-top: 0; margin-left: auto; }
+    /* 窄屏下把四列折成两行，分位条独占下行：挤在一行里它会窄到看不出位置 */
+    .position-row { grid-template-columns: 72px 1fr auto; grid-template-areas: "name value extra" "bar bar bar"; row-gap: 6px; }
+    .pos-name { grid-area: name; }
+    .pos-value { grid-area: value; }
+    .pos-extra { grid-area: extra; }
+    .pos-bar { grid-area: bar; }
     .stock-toolbar { flex-direction: column; align-items: stretch; }
     .stock-search { width: 100%; flex: 1; }
     .sim-panel { padding: 18px 16px; }
