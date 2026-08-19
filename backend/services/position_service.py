@@ -497,9 +497,13 @@ async def market_position() -> dict:
                 f"对账不一致：两融接口给的沪深300 收盘 {up}，"
                 f"index_quote 里是 {hs300['close']}，至少有一边的数据是错的")
 
-    dates_seen = [i["date"] for i in indices] + ([margin["date"]] if margin.get("date") else [])
+    # 表头日期只代表指数点位，不取全体 max。两融是交易所盘后汇总，每个交易日下午都
+    # 比指数晚一天，取 max 会让表头写着 08-19 而下面「融资余额」那行其实是 08-18 的数
+    # —— 一个对不上下面数字的日期标签，比不标日期更坏。两融自己的日期由前端单独标在那行。
+    index_dates = [i["date"] for i in indices]
+    updated_at = max(index_dates) if index_dates else margin.get("date")
     return {
-        "updated_at": max(dates_seen) if dates_seen else None,
+        "updated_at": updated_at,
         "window_labels": [{"key": k, "label": lb} for k, lb, _, _ in _WINDOWS],
         "indices": indices,
         "margin": margin,

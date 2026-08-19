@@ -464,7 +464,9 @@ body::after {
 .position-row:last-of-type { border-bottom: none; }
 /* 融资那一行和四个指数不是同一类东西（一个是价格、一个是杠杆），隔一道免得被当成第五个指数 */
 .position-row-margin { margin-top: 6px; border-top: 1px solid var(--border); }
-.pos-name { font-family: var(--font-body); font-weight: 600; font-size: 0.76rem; color: var(--text-secondary); }
+.pos-name { font-family: var(--font-body); font-weight: 600; font-size: 0.76rem; color: var(--text-secondary); display: flex; flex-direction: column; }
+/* 行内日期标记：只在这行的日期和表头不一样时才渲染 */
+.pos-name-sub { font-family: var(--font-mono); font-weight: 400; font-size: 0.6rem; color: var(--text-muted); cursor: help; }
 .pos-value { font-family: var(--font-mono); font-weight: 700; font-size: 0.9rem; color: var(--text-primary); letter-spacing: -0.02em; display: flex; flex-direction: column; }
 .pos-value-sub { font-family: var(--font-mono); font-weight: 400; font-size: 0.62rem; color: var(--text-muted); letter-spacing: 0; }
 .pos-bar { display: flex; flex-direction: column; gap: 4px; min-width: 0; }

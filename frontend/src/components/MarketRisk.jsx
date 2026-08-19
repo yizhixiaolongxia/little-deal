@@ -310,7 +310,16 @@ export default function MarketRisk() {
 
                     {margin && margin.pct !== null && margin.pct !== undefined && (
                         <div className="position-row position-row-margin">
-                            <div className="pos-name">融资余额</div>
+                            <div className="pos-name">
+                                融资余额
+                                {/* 两融盘后才发布，交易日下午它比上面的指数晚一天。
+                                    不一致时就把自己的日期摆出来，别让人拿表头那个日期套到这行上 */}
+                                {margin.date && margin.date !== position.updated_at && (
+                                    <span className="pos-name-sub" title={`两融数据截至 ${margin.date}，交易所盘后汇总，比指数晚一天`}>
+                                        {margin.date.slice(5)}
+                                    </span>
+                                )}
+                            </div>
                             <div className="pos-value">
                                 {margin.pct}%
                                 <span className="pos-value-sub">{margin.rz_ye_yi} 亿</span>

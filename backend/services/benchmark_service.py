@@ -15,7 +15,7 @@
 绝不静默返回。
 """
 from bisect import bisect_right
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Dict, List, Optional
 
 import httpx
@@ -52,8 +52,16 @@ BENCHMARKS: Dict[str, dict] = {
 }
 DEFAULT_BENCHMARK = "hs300"
 
-# 收盘 15:00，日线数据要等一会儿才齐，16 点前只期望上一个交易日
-_CLOSE_HOUR = 16
+# A股 15:00 收盘，新浪日线收盘后很快就齐（实测 15:49 已能取到当天完整收盘价）。
+# 这里原来设 16，代价是收盘后整整一小时 expected 还停在上一个交易日，同步会判
+# 「已最新」直接跳过，面板于是在 15:00~16:00 显示昨天的点位，而上方实时卡片已经
+# 是今天的 —— 同一张卡里两个日期的上证指数。
+# 降到 15 换来的风险是盘中那根未完成 K 线：新浪日线在盘中就返回当天一行，close
+# 是当前价。这个由 _drop_unclosed_today 拦住，不靠时间阈值兜。
+_CLOSE_HOUR = 15
+# 从 _CLOSE_HOUR 推出来，不另写一个 15。刚才就是因为期望交易日有两份几乎相同的
+# 实现，改常量只改到一处 —— 同一个坑不踩第二遍
+_MARKET_CLOSE = time(_CLOSE_HOUR, 0)
 # 落后期望交易日超过这么多天就判定上游停更（含长假：春节最长 9 天）
 _STALE_TOLERANCE_DAYS = 12
 _SAVE_CHUNK = 1000
@@ -72,24 +80,16 @@ def name_of(key: str) -> str:
     return (BENCHMARKS.get(key) or {}).get("name", key)
 
 
-def _expected_trade_date(now: datetime) -> date:
+def expected_trade_date(now: Optional[datetime] = None,
+                        close_hour: int = _CLOSE_HOUR) -> date:
     """此刻上游最多应该能给到哪一天的收盘点位
 
     和净值同理：法定节假日推不出来，那几天这个值会偏新，
     后果由 _STALE_TOLERANCE_DAYS 的余量兜住。
+
+    close_hour 可调是给发布更晚的数据源用的——两融余额要等交所盘后汇总，
+    按收盘时间判新鲜度会永远判「不新鲜」。
     """
-    d = now.date()
-    if now.hour < _CLOSE_HOUR:
-        d -= timedelta(days=1)
-    while d.weekday() >= 5:
-        d -= timedelta(days=1)
-    return d
-
-
-def expected_trade_date(now: Optional[datetime] = None,
-                        close_hour: int = _CLOSE_HOUR) -> date:
-    """对外版的期望交易日。close_hour 可调是给发布更晚的数据源用的——
-    两融余额要等交所盘后汇总，十六点拿不到当天的数"""
     now = now or datetime.now()
     d = now.date()
     if now.hour < close_hour:
@@ -142,6 +142,22 @@ async def _fetch_upstream(symbol: str, datalen: int = _FULL_HISTORY_LEN) -> List
     return points
 
 
+def _drop_unclosed_today(points: List[dict],
+                         now: Optional[datetime] = None) -> List[dict]:
+    """扔掉盘中那根还没收盘的 K 线
+
+    新浪日线在盘中就返回当天一行，close 填的是当前价。盘中跑同步会把当前价当收盘价
+    落库，之后虽然会被覆盖回来，但中间这段时间分位、超额全是拿盘中价算的，而且数字
+    看起来完全正常，没有任何异常迹象。
+    _CLOSE_HOUR 从 16 降到 15 之后，时间上那一小时缓冲没了，这道过滤是唯一的防线。
+    """
+    now = now or datetime.now()
+    if now.time() >= _MARKET_CLOSE:
+        return points
+    today = now.date()
+    return [p for p in points if p["date"] < today]
+
+
 async def _save(symbol: str, points: List[dict]) -> int:
     async with async_session() as session:
         for i in range(0, len(points), _SAVE_CHUNK):
@@ -173,7 +189,7 @@ async def sync(key: str = DEFAULT_BENCHMARK, force: bool = False) -> dict:
     """
     symbol = _symbol(key)
     now = datetime.now()
-    expected = _expected_trade_date(now)
+    expected = expected_trade_date(now)
 
     last = await _last_date(symbol)
     if not force and last and last >= expected:
@@ -183,6 +199,11 @@ async def sync(key: str = DEFAULT_BENCHMARK, force: bool = False) -> dict:
         points = await _fetch_upstream(symbol)
     except Exception as e:
         return {"key": key, "symbol": symbol, "status": "failed", "message": str(e)}
+
+    points = _drop_unclosed_today(points, now)
+    if not points:
+        return {"key": key, "symbol": symbol, "status": "failed",
+                "message": "上游只给出盘中未收盘的点位，等 15:00 收盘后再同步"}
 
     total = await _save(symbol, points)
     upstream_last = points[-1]["date"]
@@ -252,7 +273,7 @@ def _period_return_from(dates: List[date], closes: List[float],
                 "reason": f"{symbol} 还没有点位落库，先跑 scripts/sync_benchmark.py"}
 
     # 上游停更检测：库里最新点位离期望交易日太远
-    expected = _expected_trade_date(datetime.now())
+    expected = expected_trade_date()
     lag = (expected - dates[-1]).days
     if lag > _STALE_TOLERANCE_DAYS:
         return {**base, "pct": None,
