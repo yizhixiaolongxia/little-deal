@@ -1,17 +1,28 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  ✅ 这个 plist 现在是生效的：launchctl list 里退出码 0，briefs/cron.log
-  里能看到它每个工作日 21:00 连续生成简报（cron.log 是它自己的 stdout，
-  08-10~08-14 那几行就是它写的）。早先那句「不生效」的警告已经过时。
+  ⛔ 已停用。现在生成简报的是 backend/scheduler.py（BRIEF_AT = 22:30）。
 
-  为什么它能跑、而 com.myfund.navsync 还是被 TCC 拦（退出码 126）：TCC 授权
-  是按可执行文件给的。这个任务直接调 venv 里的 python，navsync 调的是 /bin/bash——
-  给了前者磁盘访问、没给后者，就成了现在一个通一个不通。
+  为什么停用——它会稳定地产出空简报：
+  daily_brief.py 是用 urllib 打 http://127.0.0.1:8000 拿数据的。launchd 到点就盲跑，
+  不管后端开没开；后端没开时三个接口全部 Connection refused，脚本自己不报错
+  （容错写的），于是退出码 0、cron.log 里也写「简报已写入」——但文件里只有三行
+  错误提示。实测 08-10~08-14 五个交易日全是这种 24 行的空简报，而监控上看不出异常。
 
-  注意：后端 backend/scheduler.py 里也有一套调度，后端开着时它 21:00 也会生成一次。
-  daily_brief.py 幂等（覆盖当天文件），两边都跑不会写出错数据，但一天写两次、
-  日志分散在两处。想收敛成一套的话，另说。
+  scheduler 为什么不会犯这个错：它就活在后端进程里，能跑到 daily_brief.py
+  就说明后端必然是开着的，调用方和被调用方同生命周期。代价是后端不开就没简报，
+  但「没文件」看得见，比「有文件但里面是空的」安全——后者会让你以为今天无信号。
+
+  停用方式（不是删文件，可逆）：
+    launchctl unload  ~/Library/LaunchAgents/com.myfund.dailybrief.plist
+    launchctl disable "gui/$(id -u)/com.myfund.dailybrief"
+  disable 这步不能省：只 unload 的话，~/Library/LaunchAgents/ 里的 plist
+  下次登录会被 launchd 重新加载，空简报又回来了。
+
+  想恢复它（例如改成不依赖 HTTP、直读数据库之后）：
+    launchctl enable "gui/$(id -u)/com.myfund.dailybrief"
+    launchctl load   ~/Library/LaunchAgents/com.myfund.dailybrief.plist
+  恢复前先把 backend/scheduler.py 里的 brief 调度关掉，否则两边写同一个文件。
 
   ==== 以下是它本来的设计 ====
 

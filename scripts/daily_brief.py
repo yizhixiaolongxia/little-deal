@@ -1,7 +1,7 @@
 """每日 14:30 决策简报生成器
 
 设计前提：我（AI）没有常驻进程，无法自己定时醒来。所以由 cron 在每个交易日
-14:30 跑这个脚本，把「市场温度 + 持仓体检 + 约束越界 + 费率窗口 + 主题热度」
+14:30 跑这个脚本，把「市场温度 + 估值锚 + 持仓体检 + 约束越界 + 费率窗口 + 主题热度」
 落成一份 Markdown。之后你叫我时，我读当天的简报再决定要不要动手。
 
 脚本本身**不下单**，只产出事实与触发信号。下单永远是读完简报后的显式动作。
@@ -148,8 +148,59 @@ def section_market(risk, hist):
     return lines, score
 
 
+def section_valuation(val):
+    """估值锚：市场贵不贵
+
+    放在情绪之后、持仓之前——情绪答的是「大家怎么想」，估值答的是「值多少钱」，
+    后者才决定长期回报。两者并列而不是从属：只看情绪会在“跌了很多但依然贵”的
+    市场里抢底，只看估值会在便宜区间里描得太早。
+
+    判定不在这里做，由 /api/macro/valuation 下发：看板和简报必须用同一套阈值，
+    两处各判一次的话页面显示「中性」而简报喊「便宜」这种矛盾迟早会出现。
+    """
+    lines = ['## 二、估值锚', '']
+    if not ok(val):
+        lines += [f'⚠️ 估值接口没拿到数据：{val.get("__error__")}', '']
+        return lines
+    if val.get('reason'):
+        lines += [f'⚠️ {val["reason"]}', '']
+        return lines
+
+    erp, pe, bond = val.get('erp'), val.get('a_pe'), val.get('cn_10y')
+    th = val.get('thresholds') or {}
+    stage_txt = {'cheap': '便宜', 'rich': '贵', 'neutral': '中性'}.get(val.get('stage'), '--')
+    if erp:
+        lines.append(f'**股债性价比 {erp["value"]:.2f}% — 估值{stage_txt}**'
+                     f'（截至 {erp["date"]}）')
+        lines.append('')
+
+    lines.append('| 指标 | 最新值 | 数据日期 |')
+    lines.append('| --- | --- | --- |')
+    if pe:
+        lines.append(f'| 全A整体法PE | {pe["value"]:.2f} 倍 | {pe["date"]} |')
+    if erp:
+        lines.append(f'| 股债性价比 ERP | {erp["value"]:.2f}% | {erp["date"]} |')
+    if bond:
+        lines.append(f'| 中债10年 | {bond["value"]:.4f}% | {bond["date"]} |')
+    lines.append('')
+
+    # 注意：val['signal'] 那句完整判定文案故意不在这里印，只在第七节出现一次。
+    # 上面的标题行已经说了「估值便宜/中性/贵」，同一句话印两遍会被读成两个独立结论。
+    pctl = val.get('percentile')
+    if pctl is not None:
+        lines += [f'ERP 处于本地历史 **{pctl} 分位**（样本 {val.get("days")} 个交易日）', '']
+    elif val.get('percentile_reason'):
+        lines += [f'⚠️ {val["percentile_reason"]}', '']
+
+    lines.append(f'> 档位阈值：ERP ≥{th.get("cheap")}% 算便宜、≤{th.get("rich")}% 算贵，中间为中性。')
+    lines.append('> PE 用整体法且含亏损股，跟财经媒体口径的「A股PE」不是一回事，所以档位只看')
+    lines.append('> ERP（相对量，受口径影响小）。这个口径会让 ERP 偏小，即偏向「股票不便宜」——偏保守。')
+    lines.append('')
+    return lines
+
+
 def section_position(acc, curve, excess):
-    lines = ['## 二、持仓体检', '']
+    lines = ['## 三、持仓体检', '']
     if not ok(acc):
         lines += [f'⚠️ 账户接口没拿到数据：{acc.get("__error__")}', '']
         return lines, [], None
@@ -255,7 +306,7 @@ def _portfolio_risk_block(curve):
 
 
 def section_risk_check(positions, total, curve):
-    lines = ['## 三、约束越界检查', '']
+    lines = ['## 四、约束越界检查', '']
     disc = (curve.get('discipline') or {}) if ok(curve) else {}
     half, third = disc.get('half'), disc.get('third')
     dd_txt = (f'回撤 -{half}% 降半仓 / -{third}% 降三成仓'
@@ -371,7 +422,7 @@ def _drawdown_block(curve, hits):
 
 def section_fee_window(positions):
     """算出每只再等几天能降一档赎回费，避免为了小波动付 1.5% 惩罚费"""
-    lines = ['## 四、赎回费窗口', '', '想卖之前先看这张表：差一两天就降档的，等一下更划算。', '']
+    lines = ['## 五、赎回费窗口', '', '想卖之前先看这张表：差一两天就降档的，等一下更划算。', '']
     lines.append('| 名称 | 代码 | 持有天数 | 当前费率 | 再等 | 降到 | 能省 |')
     lines.append('| --- | --- | --- | --- | --- | --- | --- |')
     tips = []
@@ -404,7 +455,7 @@ def section_fee_window(positions):
 
 
 def section_theme(fundlist):
-    lines = ['## 五、全市场主题热度', '']
+    lines = ['## 六、全市场主题热度', '']
     if not ok(fundlist):
         lines += [f'⚠️ 全市场列表没拿到：{fundlist.get("__error__")}', '']
         return lines
@@ -439,23 +490,82 @@ def section_theme(fundlist):
     return lines
 
 
-def section_signals(score, hits, tips):
-    lines = ['## 六、今天的触发信号', '']
+def _emotion_signal(score):
+    """情绪档位只描述短期温度，不再单独下加仓/减仓结论
+
+    改动原因：原来这里「情绪 25 分 → 动用弹药加仓」是唯一的操作信号，
+    等于把择时当成了买入依据。恐惧本身不是便宜——2021 年初那种「跌了不少但
+    还是很贵」的市场里，照这条信号会一路买在半山腰。所以动作交给下面的交叉判定，
+    情绪只回答「现在人多热」。
+    """
+    if score is None:
+        return None
+    if score >= 76:
+        return f'情绪 {score} 分（极度贪婪）—— 短期过热，追高的钱最贵'
+    if score >= 56:
+        return f'情绪 {score} 分（贪婪）—— 别在这个位置追新标的'
+    if score <= 25:
+        return f'情绪 {score} 分（极度恐惧）—— 流动性溢价最高的时候'
+    if score <= 45:
+        return f'情绪 {score} 分（恐惧）—— 有分批建仓的窗口'
+    return f'情绪 {score} 分（中性）'
+
+
+def _cross_signal(score, stage):
+    """情绪 × 估值 的交叉判定，动作只从这里出
+
+    四个格子里真正值钱的是「便宜 + 恐惧」和「贵 + 恐惧」这两个：
+      便宜+恐惧 = 别人恐慌而资产确实打折，这是价值投资唯一想等的场景；
+      贵  +恐惧 = 跌了但依然贵，抢底就是接刀（价值陷阱），必须明确劝退。
+    另两个格子的结论都是「不动」——贵+贪婪该减，但减多少取决于仓位纪律
+    （第四节），不在这里拍数。
+    """
+    if stage not in ('cheap', 'rich'):
+        return None
+    feared = score is not None and score <= 45
+    greedy = score is not None and score >= 56
+    # score 取不到时不能说「情绪中性」——那是把「没数据」说成了「有数据且中性」
+    calm = '、情绪中性' if score is not None else '（情绪分取不到）'
+    if stage == 'cheap':
+        if feared:
+            return ('**估值便宜 + 情绪恐惧** → 这是可以动用短债弹药的场景。'
+                    '分批买，别一次打完（便宜可以更便宜）')
+        if greedy:
+            return ('估值便宜但情绪已转贪婪 → 仍可加，但按计划金额买，'
+                    '不要因为涨了而加码')
+        return f'估值便宜{calm} → 按建仓计划正常推进'
+    if feared:
+        return ('⚠️ **估值贵 + 情绪恐惧 → 不要抢底**。跌了不等于便宜，'
+                'ERP 说的是这里的股权风险补偿还不够厚')
+    if greedy:
+        return '**估值贵 + 情绪贪婪** → 减仓窗口，把利润挪进短债（幅度看第四节的越界项）'
+    return f'估值贵{calm} → 停止加仓，等估值或盈利消化'
+
+
+def section_signals(score, val, hits, tips):
+    lines = ['## 七、今天的触发信号', '']
     sigs = []
-    if score is not None:
-        if score >= 76:
-            sigs.append(f'情绪 {score} 分（极度贪婪）→ 考虑减仓、把利润挪进短债')
-        elif score <= 25:
-            sigs.append(f'情绪 {score} 分（极度恐惧）→ 考虑动用短债弹药加仓')
-        elif score >= 56:
-            sigs.append(f'情绪 {score} 分（贪婪）→ 不加仓，盯住越界项')
-        elif score <= 45:
-            sigs.append(f'情绪 {score} 分（恐惧）→ 可小步分批，别一次打完')
-        else:
-            sigs.append(f'情绪 {score} 分（中性）→ 无操作必要')
+    em = _emotion_signal(score)
+    if em:
+        sigs.append(em)
+
+    stage = val.get('stage') if ok(val) else None
+    if ok(val) and val.get('signal'):
+        sigs.append(val['signal'])
+    cross = _cross_signal(score, stage)
+    if cross:
+        sigs.append(cross)
+    elif stage == 'neutral':
+        sigs.append('估值中性 + 情绪未到极端 → 无操作必要，只盯越界项')
+    else:
+        # 估值这一路没出信号（接口挂了 / 数据不足）必须说出来。
+        # 沉默会被读成「估值没问题」，那正是空简报的老毛病。
+        sigs.append('⚠️ 估值锚今天没给出档位（见第二节），本次信号只有情绪一条腿，'
+                    '不要据此加仓')
+
     sigs += hits
     if tips:
-        sigs.append('有标的临近赎回费降档，卖出动作建议推迟（见第四节）')
+        sigs.append('有标的临近赎回费降档，卖出动作建议推迟（见第五节）')
     lines += [f'- {s}' for s in sigs] if sigs else ['- 无。']
     lines += ['', '---', '',
               '这份简报只陈述事实和信号，**没有任何自动下单**。',
@@ -497,6 +607,7 @@ def append_history(total, acc):
 def main():
     risk = get('/api/market/risk')
     hist = get('/api/market/risk/history', {'days': 30})
+    val = get('/api/macro/valuation')
     acc = get('/api/sim/account')
     curve = get('/api/sim/curve', {'with_points': 'false'})
     fundlist = get('/api/fund/list', timeout=120)
@@ -517,14 +628,16 @@ def main():
             '', f'生成时间 {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}', '']
 
     m_lines, score = section_market(risk, hist)
+    v_lines = section_valuation(val)
     p_lines, positions, total = section_position(acc, curve, excess)
 
     r_lines, hits = section_risk_check(positions, total, curve) if positions else ([], [])
     f_lines, tips = section_fee_window(positions) if positions else ([], [])
     t_lines = section_theme(fundlist)
-    s_lines = section_signals(score, hits, tips)
+    s_lines = section_signals(score, val, hits, tips)
 
-    body = '\n'.join(head + m_lines + p_lines + r_lines + f_lines + t_lines + s_lines)
+    body = '\n'.join(head + m_lines + v_lines + p_lines
+                     + r_lines + f_lines + t_lines + s_lines)
 
     BRIEF_DIR.mkdir(exist_ok=True)
     out = BRIEF_DIR / f'{date.today().strftime("%Y-%m-%d")}.md'

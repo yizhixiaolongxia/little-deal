@@ -686,6 +686,91 @@ async def dashboard() -> dict:
     }
 
 
+# ── 对外：估值锚（给决策简报用）──────────────────────────
+
+# ERP 档位阈值（%）。A 股 ERP 历史大致在 0~6 区间：4 以上对应 2008/2018/2024
+# 这类底部区域，1 以下对应 2007/2015 泡沫顶。这两个数是经验值，不是从本地
+# 数据算出来的——样本攒够之后应该换成真分位，到时这两行就该删了。
+_ERP_CHEAP = 4.0
+_ERP_RICH = 1.0
+
+# 算历史分位至少要这么多个交易日。250 ≈ 一年。少于这个数的分位是噪音：
+# 3 个点里排第 2 也能算出「67 分位」，那个数看着像结论，其实什么都没说。
+_PCTL_MIN_DAYS = 250
+
+
+async def valuation_anchor() -> dict:
+    """估值锚：全A 整体法 PE、股债性价比 ERP，以及「现在贵还是便宜」的档位
+
+    为什么单开一个接口而不让简报去读 dashboard：dashboard 是给页面用的，
+    四十多个指标全量返回；简报只要估值这一层，而且需要一个能直接写进信号列表
+    的档位结论。判定放后端是为了让看板和简报用同一套阈值——两处各判一次的话，
+    页面显示「中性」而简报喊「便宜」这种自相矛盾迟早会出现。
+
+    档位用固定阈值而不是历史分位，这是当前最大的妥协，说在明处：
+    a_pe / erp 是拿本地 stock_daily 的全市场横截面自算的（口径见 _sync_valuation），
+    而 stock_daily 只在拉全市场快照时才存一天，所以估值的历史是从第一次落库那天
+    开始长出来的——跟 sina 那几个指标同一个毛病。样本不够时分位一律返回 None
+    并说明还差多少天，攒够 _PCTL_MIN_DAYS 自动切到真分位。
+
+    PE 只报数不判档：整体法含亏损股，这个口径算出来的 20 倍跟财经媒体上说的
+    「A 股 PE」不是一回事，给它定绝对阈值等于拿两套尺子比。ERP 是相对量（对 10 年
+    国债的溢价），受口径影响小得多，所以档位只看 ERP。遗留的偏差说清楚：
+    PE 口径偏高 → 1/PE 偏低 → ERP 偏小，即系统性偏向「股票不便宜」。
+    偏保守可以接受，偏乐观就不行——后者会让人在山顶上加仓。
+    """
+    erp_series = await _series(MacroDaily, "erp")
+    pe_series = await _series(MacroDaily, "a_pe")
+    bond_series = await _series(MacroDaily, "cn_10y")
+
+    def _last(series) -> Optional[dict]:
+        if not series:
+            return None
+        d, v = series[-1]
+        return {"value": v, "date": d.strftime("%Y-%m-%d")}
+
+    out = {
+        "a_pe": _last(pe_series),
+        "erp": _last(erp_series),
+        "cn_10y": _last(bond_series),
+        "days": len(erp_series),
+        "stage": None, "signal": None,
+        "percentile": None, "percentile_reason": None,
+        "thresholds": {"cheap": _ERP_CHEAP, "rich": _ERP_RICH},
+    }
+
+    if not erp_series:
+        # 没数据就说没数据。这里给个中性档位比空着危险得多——
+        # 简报会把档位当信号写出去，「中性」看着像结论，实际上是没算过
+        out["reason"] = "股债性价比还没落库，先跑 scripts/sync_macro.py"
+        return out
+
+    erp = erp_series[-1][1]
+    if erp >= _ERP_CHEAP:
+        out["stage"] = "cheap"
+        out["signal"] = (f"股债性价比 {erp:.2f}%（≥{_ERP_CHEAP}%）→ 股票相对债券便宜，"
+                         f"这是加仓区间而不是减仓区间")
+    elif erp <= _ERP_RICH:
+        out["stage"] = "rich"
+        out["signal"] = (f"股债性价比 {erp:.2f}%（≤{_ERP_RICH}%）→ 股票相对债券贵，"
+                         f"涨上去也不该追，考虑把利润挪进短债")
+    else:
+        out["stage"] = "neutral"
+        out["signal"] = (f"股债性价比 {erp:.2f}%（介于 {_ERP_RICH}~{_ERP_CHEAP}%）→ 估值中性，"
+                         f"不构成加仓或减仓的理由")
+
+    if len(erp_series) >= _PCTL_MIN_DAYS:
+        vals = [v for _, v in erp_series]
+        out["percentile"] = round(
+            sum(1 for v in vals if v <= erp) / len(vals) * 100, 1)
+    else:
+        out["percentile_reason"] = (
+            f"样本仅 {len(erp_series)} 个交易日，算历史分位至少要 {_PCTL_MIN_DAYS} 天，"
+            f"还差 {_PCTL_MIN_DAYS - len(erp_series)} 天。当前档位用的是经验阈值，"
+            f"不是本地历史分位")
+    return out
+
+
 async def history(code: str, limit: int = 120) -> dict:
     """单指标完整序列，给前端画大图用"""
     spec = spec_of(code)

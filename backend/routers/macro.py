@@ -27,6 +27,16 @@ async def get_history(code: str, limit: int = Query(default=120, ge=2, le=600)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/valuation")
+async def get_valuation():
+    """估值锚：全A PE、股债性价比 ERP 与「贵/便宜」档位，给决策简报用。
+    样本不够时 percentile 为 null 并在 percentile_reason 里说明，不编假分位"""
+    try:
+        return await macro_service.valuation_anchor()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/sync")
 async def post_sync(force: bool = Query(default=False)):
     """手动触发同步。四组数据源里有失败的会带在 failed 字段里返回，
